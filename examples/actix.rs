@@ -17,7 +17,7 @@ async fn main() -> std::io::Result<()> {
             .service(generate_handler)
             .service(verify_handler)
     })
-    .bind("127.0.0.1:18080")?
+    .bind("0.0.0.0:18080")?
     .run()
     .await
 }
