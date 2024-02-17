@@ -5,19 +5,34 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use slider_captcha_server::{verify_puzzle, SliderPuzzle};
 use std::{collections::HashMap, path::PathBuf, sync::{Arc, Mutex}};
+use mysql::*;
+use mysql::prelude::*;
+use std::env;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let mut app_state = State::default();
+    let listeningip = env::var("CAPTCHA_IP").unwrap_or("0.0.0.0".to_string());
+    let listeningport = env::var("CAPTCHA_PORT").unwrap_or("18080".to_string());
+    let address = format!("{}:{}", listeningip, listeningport);
 
-    println!("\nStarted slider_captcha_server on port 18080.\n");
+    // Konstruktion der Datenbank-URL aus Umgebungsvariablen oder direkt
+    let database_url = DatabaseConfig::new().url;
+
+    // Testen der Datenbankverbindung
+    if let Err(e) = test_database_connection(&database_url) {
+        eprintln!("Error when connecting to the database: {}", e);
+        std::process::exit(1);
+    }
+
+    println!("\nStarted slider_captcha_server on {}.\n", address);
     HttpServer::new(move || {
         App::new()
             .data(app_state.clone())
             .service(generate_handler)
             .service(verify_handler)
     })
-    .bind("0.0.0.0:18080")?
+    .bind(address)?
     .run()
     .await
 }
@@ -77,7 +92,40 @@ async fn verify_handler(state: Data<State>, solution: web::Json<Solution>) -> im
     };
     locked_state.remove(&solution.id);
     if verify_puzzle(correct_solution, solution.x, 0.01) {
-        HttpResponse::Ok().body("VERIFIED!")
+                
+                let config = DatabaseConfig::new();
+                let pool = match Pool::new(config.url) {
+                    Ok(pool) => pool,
+                    Err(_) => return HttpResponse::InternalServerError().body("Database connection failed"),
+                };
+                let mut conn = match pool.get_conn() {
+                    Ok(conn) => conn,
+                    Err(_) => return HttpResponse::InternalServerError().body("Could not establish a connection"),
+                };
+
+                let new_uuid = uuid::Uuid::new_v4().to_string();
+        
+                let query_result = conn.exec_drop(
+                    "INSERT INTO approvedid (uuid) VALUES (:uuid)",
+                    params! {
+                        "uuid" => &new_uuid,
+                    },
+                );
+        
+                match query_result {
+                    Ok(_) => {
+                        let last_insert_id = conn.last_insert_id();
+                        let response = serde_json::json!({
+                            "message": "VERIFIED!",
+                            "uuid": new_uuid,
+                            "id": last_insert_id,
+                        });
+                        HttpResponse::Ok().json(response)
+                    },
+                    Err(_) => HttpResponse::InternalServerError().body("Database operation failed"),
+                }
+            
+        
     } else {
         HttpResponse::BadRequest().body("Incorrect solution")
     }
@@ -109,4 +157,29 @@ fn image_to_base64(image: DynamicImage) -> String {
         .write_to(&mut buffer, image::ImageOutputFormat::Png)
         .unwrap();
     base64::encode(&buffer)
+}
+
+struct DatabaseConfig {
+    url: String,
+}
+
+impl DatabaseConfig {
+    fn new() -> Self {
+        let user = env::var("MYSQL_USER").unwrap_or("myuser".to_string());
+        let password = env::var("MYSQL_PASSWORD").unwrap_or("mypassword".to_string());
+        let ip = env::var("DB_IP").unwrap_or("172.10.0.3".to_string());
+        let port = env::var("DB_PORT").unwrap_or("3306".to_string());
+        let database_name = env::var("MYSQL_DATABASE").unwrap_or("mydatabase".to_string());
+
+        DatabaseConfig {
+            url: format!("mysql://{}:{}@{}:{}/{}", user, password, ip, port, database_name),
+        }
+    }
+}
+
+fn test_database_connection(database_url: &str) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let pool = mysql::Pool::new(database_url)?;
+    let mut conn = pool.get_conn()?;
+    conn.query_drop("SELECT 1")?;
+    Ok(())
 }
