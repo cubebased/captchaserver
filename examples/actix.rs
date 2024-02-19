@@ -7,6 +7,8 @@ use slider_captcha_server::{verify_puzzle, SliderPuzzle};
 use std::{collections::HashMap, path::PathBuf, sync::{Arc, Mutex}};
 use mysql::*;
 use mysql::prelude::*;
+use rand::{thread_rng, Rng};
+use std::fs;
 use std::env;
 
 #[actix_web::main]
@@ -39,26 +41,34 @@ async fn main() -> std::io::Result<()> {
 
 #[get("/puzzle")]
 async fn generate_handler(state: web::Data<State>) -> impl Responder {
-    let binding = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("test")
-        .join("archworkout.png");
-    let image_path = binding.to_str().unwrap();
+    // Path to the directory containing the images
+    let dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test");
+    
+    // List all files in the directory and filter out non-files and optionally filter by image extensions
+    let images: Vec<PathBuf> = fs::read_dir(dir_path)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && path.extension().map_or(false, |ext| ext == "png" || ext == "jpg"))
+        .collect();
+
+    // Select a random image from the list
+    let mut rng = thread_rng();
+    let random_index = rng.gen_range(0..images.len());
+    let image_path = images[random_index].to_str().unwrap();
 
     let slider_puzzle: SliderPuzzle = match SliderPuzzle::new(image_path) {
         Ok(puzzle) => puzzle,
         Err(err) => {
-            print!("!!!BAD IMAGE PATH!!!! \n{}", err);
+            eprintln!("!!!BAD IMAGE PATH!!!! \n{}", err);  // Changed to `eprintln!` for error output
             return HttpResponse::InternalServerError().body("Contact Admin.");
         }
     };
-    // // Generate a unique request ID and store the solution in the global state
+
+    // Generate a unique request ID and store the solution in the global state
     let request_id = uuid::Uuid::new_v4().to_string();
     let solution = slider_puzzle.x;
-    state
-        .solutions
-        .lock()
-        .unwrap()
-        .insert(request_id.clone(), solution);
+    state.solutions.lock().unwrap().insert(request_id.clone(), solution);
 
     let response = json!({
         "puzzle_image": image_to_base64(slider_puzzle.cropped_puzzle),
@@ -67,10 +77,7 @@ async fn generate_handler(state: web::Data<State>) -> impl Responder {
         "y": slider_puzzle.y,
     });
 
-    println!(
-        "\nSOLUTION:\nid:{:?},\nx:{:?},y:{:?}",
-        request_id, slider_puzzle.x, slider_puzzle.y
-    );
+    println!("\nSOLUTION:\nid:{:?},\nx:{:?},y:{:?}", request_id, slider_puzzle.x, slider_puzzle.y);
     HttpResponse::Ok().json(response)
 }
 
