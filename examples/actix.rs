@@ -10,6 +10,7 @@ use mysql::prelude::*;
 use rand::{thread_rng, Rng};
 use std::fs;
 use std::env;
+use actix_cors::Cors;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -29,8 +30,14 @@ async fn main() -> std::io::Result<()> {
 
     println!("\nStarted slider_captcha_server on {}.\n", address);
     HttpServer::new(move || {
+        let cors = Cors::default()
+            .allow_any_origin()
+            .allowed_methods(vec!["GET", "POST"])
+            .allowed_header(actix_web::http::header::CONTENT_TYPE)
+            .max_age(3600);
         App::new()
             .data(app_state.clone())
+            .wrap(cors)
             .service(generate_handler)
             .service(verify_handler)
     })
