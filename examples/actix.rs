@@ -105,7 +105,7 @@ async fn verify_handler(state: Data<State>, solution: web::Json<Solution>) -> im
         _ => return HttpResponse::BadRequest().body("Invalid request ID"),
     };
     locked_state.remove(&solution.id);
-    if verify_puzzle(correct_solution, solution.x, 0.01) {
+    if verify_puzzle(correct_solution, solution.x, 0.08) {
                 
                 let config = DatabaseConfig::new();
                 let pool = match Pool::new(config.url) {
